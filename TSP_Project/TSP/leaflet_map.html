@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>TSP - Real World Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+    }
+
+    #map {
+      height: 85vh;
+    }
+
+    #panel {
+      background: #1a1a2e;
+      color: white;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    #panel h2 {
+      margin: 0;
+      color: #00d4aa;
+      font-size: 17px;
+    }
+
+    .stat {
+      background: #16213e;
+      padding: 7px 13px;
+      border-radius: 7px;
+      font-size: 13px;
+    }
+
+    .stat b {
+      color: #00d4aa;
+    }
+
+    button {
+      background: #00d4aa;
+      color: #1a1a2e;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 7px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    button.red {
+      background: #e74c3c;
+      color: white;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="panel">
+    <h2>🗺️ TSP Route Optimizer</h2>
+    <div class="stat">Cities: <b id="count">0</b></div>
+    <div class="stat">Random: <b id="rand">- km</b></div>
+    <div class="stat">Optimized: <b id="opt">- km</b></div>
+    <div class="stat">Saved: <b id="save">-</b></div>
+    <button onclick="optimize()">⚡ Optimize</button>
+    <button class="red" onclick="reset()">🗑️ Clear</button>
+    <div style="font-size:11px;color:#aaa;">👆 Click map to add cities</div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([20.5937, 78.9629], 5);
+
+    // Google Maps-style tiles (free)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let cities = [], markers = [], randLine, optLine;
+    const labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    map.on('click', e => {
+      const { lat, lng } = e.latlng;
+      const label = labels[cities.length] || cities.length + 1;
+      cities.push({ lat, lng, label });
+
+      const m = L.marker([lat, lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:#1a1a2e;color:#00d4aa;border:2px solid #00d4aa;
+                           border-radius:50%;width:28px;height:28px;display:flex;
+                           align-items:center;justify-content:center;
+                           font-weight:bold;font-size:13px;">${label}</div>`,
+          iconSize: [28, 28], iconAnchor: [14, 14]
+        })
+      }).bindPopup(`<b>City ${label}</b><br>${lat.toFixed(4)}, ${lng.toFixed(4)}`).addTo(map);
+
+      markers.push(m);
+      document.getElementById('count').textContent = cities.length;
+    });
+
+    function dist(a, b) {
+      const R = 6371, dLat = (b.lat - a.lat) * Math.PI / 180, dLon = (b.lng - a.lng) * Math.PI / 180;
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.asin(Math.sqrt(x));
+    }
+
+    function totalDist(r) {
+      return r.reduce((s, c, i) => s + dist(c, r[(i + 1) % r.length]), 0);
+    }
+
+    function optimize() {
+      if (cities.length < 3) { alert('Add at least 3 cities!'); return; }
+      if (randLine) map.removeLayer(randLine);
+      if (optLine) map.removeLayer(optLine);
+
+      // Random
+      let rnd = [...cities].sort(() => Math.random() - 0.5);
+      const rDist = totalDist(rnd);
+
+      // Nearest Neighbour
+      let unvisited = [...cities], route = [unvisited.shift()];
+      while (unvisited.length) {
+        let cur = route[route.length - 1];
+        let near = unvisited.reduce((b, c) => dist(cur, c) < dist(cur, b) ? c : b);
+        route.push(near); unvisited.splice(unvisited.indexOf(near), 1);
+      }
+
+      // 2-Opt
+      let improved = true;
+      while (improved) {
+        improved = false;
+        for (let i = 0; i < route.length - 1; i++) {
+          for (let j = i + 2; j < route.length; j++) {
+            if (j === route.length - 1 && i === 0) continue;
+            const [a, b, c, d] = [route[i], route[i + 1], route[j], route[(j + 1) % route.length]];
+            if (dist(a, b) + dist(c, d) > dist(a, c) + dist(b, d) + 0.001) {
+              route.splice(i + 1, j - i, ...route.slice(i + 1, j + 1).reverse());
+              improved = true;
+            }
+          }
+        }
+      }
+      const oDist = totalDist(route);
+
+      // Draw
+      randLine = L.polyline([...rnd, rnd[0]].map(c => [c.lat, c.lng]),
+        { color: '#e74c3c', weight: 3, dashArray: '10,8', opacity: 0.8 }).addTo(map)
+        .bindTooltip(`Random: ${rDist.toFixed(1)} km`);
+
+      optLine = L.polyline([...route, route[0]].map(c => [c.lat, c.lng]),
+        { color: '#00b894', weight: 4, opacity: 0.9 }).addTo(map)
+        .bindTooltip(`Optimized: ${oDist.toFixed(1)} km`);
+
+      const pct = ((rDist - oDist) / rDist * 100).toFixed(1);
+      document.getElementById('rand').textContent = rDist.toFixed(1) + ' km';
+      document.getElementById('opt').textContent = oDist.toFixed(1) + ' km';
+      document.getElementById('save').textContent = pct + '% shorter';
+    }
+
+    function reset() {
+      cities = []; markers.forEach(m => map.removeLayer(m)); markers = [];
+      if (randLine) map.removeLayer(randLine);
+      if (optLine) map.removeLayer(optLine);
+      ['count', 'rand', 'opt', 'save'].forEach(id =>
+        document.getElementById(id).textContent = id === 'count' ? '0' : '-');
+    }
+  </script>
+</body>
+
+</html>

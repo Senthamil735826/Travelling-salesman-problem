@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>TSP Route Optimizer - Google Maps</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+    }
+
+    #map {
+      height: 85vh;
+      width: 100%;
+    }
+
+    #panel {
+      background: #1a1a2e;
+      color: white;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    #panel h2 {
+      margin: 0;
+      font-size: 18px;
+      color: #00d4aa;
+    }
+
+    .stat {
+      background: #16213e;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .stat span {
+      font-weight: bold;
+      color: #00d4aa;
+    }
+
+    button {
+      background: #00d4aa;
+      color: #1a1a2e;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover {
+      background: #00b894;
+    }
+
+    #legend {
+      position: absolute;
+      bottom: 30px;
+      left: 10px;
+      background: white;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 2px solid #ccc;
+      font-size: 13px;
+      z-index: 999;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .dot {
+      display: inline-block;
+      width: 30px;
+      height: 3px;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="panel">
+    <h2>🗺️ TSP Route Optimizer</h2>
+    <div class="stat">Cities: <span id="cityCount">0</span></div>
+    <div class="stat">Random: <span id="randDist">-</span> km</div>
+    <div class="stat">Optimized: <span id="optDist">-</span> km</div>
+    <div class="stat">Saved: <span id="saving">-</span></div>
+    <button onclick="optimizeRoute()">⚡ Optimize Route</button>
+    <button onclick="clearMap()" style="background:#e74c3c;color:white;">🗑️ Clear</button>
+    <div class="stat" style="font-size:11px;color:#aaa;">Click map to add cities</div>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="legend">
+    <b>Legend</b><br><br>
+    <div><span class="dot" style="background:red;"></span> Random Route</div>
+    <div style="margin-top:5px;"><span class="dot" style="background:#00b894;"></span> Optimized Route</div>
+  </div>
+
+  <script>
+    let map, cities = [], markers = [], randomPolyline, optimizedPolyline;
+    const cityLabels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    function initMap() {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 20.5937, lng: 78.9629 },  // India center
+        zoom: 5,
+        mapTypeId: 'roadmap',
+        styles: [
+          { featureType: 'water', stylers: [{ color: '#a8d8ea' }] },
+          { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] }
+        ]
+      });
+
+      // Click on map to add a city
+      map.addListener('click', function (e) {
+        addCity(e.latLng.lat(), e.latLng.lng());
+      });
+    }
+
+    function addCity(lat, lng) {
+      const label = cityLabels[cities.length] || String(cities.length + 1);
+      cities.push({ lat, lng, label });
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: map,
+        label: {
+          text: label,
+          color: 'white',
+          fontWeight: 'bold'
+        },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 16,
+          fillColor: '#1a1a2e',
+          fillOpacity: 1,
+          strokeColor: '#00d4aa',
+          strokeWeight: 2
+        },
+        title: `City ${label} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+      });
+
+      // Info window on click
+      const infoWindow = new google.maps.InfoWindow({
+        content: `<b>City ${label}</b><br>Lat: ${lat.toFixed(4)}<br>Lng: ${lng.toFixed(4)}`
+      });
+      marker.addListener('click', () => infoWindow.open(map, marker));
+
+      markers.push(marker);
+      document.getElementById('cityCount').textContent = cities.length;
+    }
+
+    function haversineKm(p1, p2) {
+      const R = 6371;
+      const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+      const dLon = (p2.lng - p1.lng) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(p1.lat * Math.PI / 180) *
+        Math.cos(p2.lat * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.asin(Math.sqrt(a));
+    }
+
+    function routeDistance(route) {
+      let total = 0;
+      for (let i = 0; i < route.length; i++) {
+        total += haversineKm(route[i], route[(i + 1) % route.length]);
+      }
+      return total;
+    }
+
+    function nearestNeighbour(cities) {
+      let unvisited = [...cities];
+      let route = [unvisited.shift()];
+      while (unvisited.length > 0) {
+        let current = route[route.length - 1];
+        let nearest = unvisited.reduce((best, city) =>
+          haversineKm(current, city) < haversineKm(current, best) ? city : best
+        );
+        route.push(nearest);
+        unvisited.splice(unvisited.indexOf(nearest), 1);
+      }
+      return route;
+    }
+
+    function twoOpt(route) {
+      let best = [...route];
+      let improved = true;
+      while (improved) {
+        improved = false;
+        for (let i = 0; i < best.length - 1; i++) {
+          for (let j = i + 2; j < best.length; j++) {
+            if (j === best.length - 1 && i === 0) continue;
+            const a = best[i], b = best[i + 1];
+            const c = best[j], d = best[(j + 1) % best.length];
+            if (haversineKm(a, b) + haversineKm(c, d) >
+              haversineKm(a, c) + haversineKm(b, d) + 0.001) {
+              best.splice(i + 1, j - i, ...best.slice(i + 1, j + 1).reverse());
+              improved = true;
+            }
+          }
+        }
+      }
+      return best;
+    }
+
+    function drawRoute(route, color, dashSymbol) {
+      const path = [...route, route[0]].map(c => ({ lat: c.lat, lng: c.lng }));
+      const line = new google.maps.Polyline({
+        path,
+        geodesic: true,
+        strokeColor: color,
+        strokeOpacity: dashSymbol ? 0 : 0.85,
+        strokeWeight: 3,
+        icons: dashSymbol ? [{
+          icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+          offset: '0',
+          repeat: '15px'
+        }] : []
+      });
+      line.setMap(map);
+      return line;
+    }
+
+    function optimizeRoute() {
+      if (cities.length < 3) {
+        alert('Please add at least 3 cities by clicking on the map!');
+        return;
+      }
+
+      // Clear old routes
+      if (randomPolyline) randomPolyline.setMap(null);
+      if (optimizedPolyline) optimizedPolyline.setMap(null);
+
+      // Random route
+      let randomRoute = [...cities].sort(() => Math.random() - 0.5);
+      const randDist = routeDistance(randomRoute);
+
+      // Optimized route
+      let nnRoute = nearestNeighbour([...cities]);
+      let optRoute = twoOpt(nnRoute);
+      const optDist = routeDistance(optRoute);
+
+      // Draw both
+      randomPolyline = drawRoute(randomRoute, '#e74c3c', true);
+      optimizedPolyline = drawRoute(optRoute, '#00b894', false);
+
+      // Update stats
+      const saving = ((randDist - optDist) / randDist * 100).toFixed(1);
+      document.getElementById('randDist').textContent = randDist.toFixed(1);
+      document.getElementById('optDist').textContent = optDist.toFixed(1);
+      document.getElementById('saving').textContent = saving + '% shorter';
+    }
+
+    function clearMap() {
+      cities = [];
+      markers.forEach(m => m.setMap(null));
+      markers = [];
+      if (randomPolyline) randomPolyline.setMap(null);
+      if (optimizedPolyline) optimizedPolyline.setMap(null);
+      document.getElementById('cityCount').textContent = '0';
+      document.getElementById('randDist').textContent = '-';
+      document.getElementById('optDist').textContent = '-';
+      document.getElementById('saving').textContent = '-';
+    }
+  </script>
+
+  <!-- ⚠️ REPLACE YOUR_API_KEY below with your actual key -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap">
+  </script>
+
+</body>
+
+</html>
